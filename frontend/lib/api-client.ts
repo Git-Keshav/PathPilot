@@ -1,0 +1,592 @@
+import { supabase, isDevMode } from './supabase/client';
+import type {
+  User,
+  Career,
+  CareerDetail,
+  Skill,
+  LearnerSkill,
+  Resource,
+  Recommendation,
+  AssessmentDetail,
+  AssessmentResult,
+  LearningPath,
+  MilestoneItem,
+  HeatmapDay,
+  LeaderboardUser,
+  ConversationSummary,
+  ChatMessage,
+  AIChatResponse,
+  NextBestAction,
+  RecommendationFeedbackPayload,
+  RecommendationObservability,
+  RecommendationEvaluationReport,
+  SkillDetail,
+  SkillPrerequisiteNode,
+  PrerequisiteGraphResponse,
+  IntelligentSkillGap,
+  NextBestSkill,
+  CareerReadinessSummary,
+  GraphValidationReport,
+  LearnerAdaptiveState,
+  AdaptationEvent,
+  ProgressHistoryPoint,
+  RoadmapVersion,
+  FeedbackInterpretationResult,
+  AdaptiveBenchmarkReport,
+  StudySession,
+  StudyTimeSummary,
+  CompleteResourceResult,
+  AdminUserRecord,
+  AdminOverviewStats,
+} from '../types';
+
+
+function getNormalizedApiBaseUrl(): string {
+  let rawUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
+  rawUrl = rawUrl.trim().replace(/\/+$/, '');
+  // Normalize localhost to 127.0.0.1 on Windows to avoid IPv6 (::1) lookup timeouts
+  if (rawUrl.includes('localhost:8000')) {
+    rawUrl = rawUrl.replace('localhost:8000', '127.0.0.1:8000');
+  }
+  if (!rawUrl.endsWith('/api/v1')) {
+    if (rawUrl.endsWith('/api')) {
+      rawUrl = `${rawUrl}/v1`;
+    } else {
+      rawUrl = `${rawUrl}/api/v1`;
+    }
+  }
+  return rawUrl;
+}
+
+const API_BASE_URL = getNormalizedApiBaseUrl();
+
+class ApiClient {
+  private async getAuthHeader(): Promise<HeadersInit> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (!isDevMode) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+          return headers;
+        }
+      } catch (e) {
+        // Fallback
+      }
+    }
+
+    const devToken = typeof window !== 'undefined' ? localStorage.getItem('pathpilot_token') : null;
+    if (devToken) {
+      headers['Authorization'] = `Bearer ${devToken}`;
+    }
+
+    return headers;
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const headers = await this.getAuthHeader();
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${API_BASE_URL}${cleanEndpoint}`;
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...headers,
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({ detail: response.statusText }));
+      const detailMsg = typeof errorBody.detail === 'string' ? errorBody.detail : JSON.stringify(errorBody.detail || response.statusText);
+      throw new Error(detailMsg || `API Error: ${response.status} ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auth & Profile
+  // ---------------------------------------------------------------------------
+  async register(payload: { email: string; password: string; displayName?: string; targetCareerId?: string }): Promise<{ access_token: string; token_type: string; user: User }> {
+    return this.request<{ access_token: string; token_type: string; user: User }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: payload.email,
+        password: payload.password,
+        display_name: payload.displayName,
+        target_career_id: payload.targetCareerId,
+      }),
+    });
+  }
+
+  async login(payload: { email: string; password: string }): Promise<{ access_token: string; token_type: string; user: User }> {
+    return this.request<{ access_token: string; token_type: string; user: User }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: payload.email,
+        password: payload.password,
+      }),
+    });
+  }
+
+  async getMe(): Promise<User> {
+    return this.request<User>('/auth/me');
+  }
+
+  async forgotPassword(email: string): Promise<any> {
+    return this.request('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async resetPassword(payload: { token: string; new_password: string }): Promise<any> {
+    return this.request('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async syncUser(payload: { display_name?: string; avatar_url?: string }): Promise<User> {
+    return this.request<User>('/auth/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateProfile(payload: Record<string, any>): Promise<any> {
+    return this.request('/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+
+  async setTargetCareer(careerSlug: string): Promise<any> {
+    return this.request('/profile/career', {
+      method: 'POST',
+      body: JSON.stringify({ career_slug: careerSlug }),
+    });
+  }
+
+  async setCareerGoal(careerSlug: string): Promise<any> {
+    return this.setTargetCareer(careerSlug);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Careers
+  // ---------------------------------------------------------------------------
+  async getCareers(category?: string): Promise<Career[]> {
+    const query = category ? `?category=${encodeURIComponent(category)}` : '';
+    try {
+      const careers = await this.request<Career[]>(`/careers${query}`);
+      if (Array.isArray(careers) && careers.length > 0) {
+        return careers;
+      }
+    } catch (err) {
+      console.warn('API getCareers fallback active:', err);
+    }
+    const fallbackList = [
+      {
+        id: 'car-ds-01',
+        slug: 'data-scientist',
+        name: 'Data Scientist',
+        category: 'Data & Analytics',
+        icon: '🧙',
+        description: 'Extract actionable insights and predictive models from complex enterprise data using statistics and machine learning.',
+        market_demand_score: 95,
+        salary_range: '$120,000 - $175,000',
+        total_skills: 8,
+      },
+      {
+        id: 'car-ai-02',
+        slug: 'ai-engineer',
+        name: 'AI & GenAI Engineer',
+        category: 'AI & Emerging Tech',
+        icon: '⚡',
+        description: 'Architect autonomous AI agents, fine-tune LLMs, build RAG pipelines, and deploy production ML systems.',
+        market_demand_score: 98,
+        salary_range: '$135,000 - $195,000',
+        total_skills: 6,
+      },
+      {
+        id: 'car-fs-03',
+        slug: 'fullstack-developer',
+        name: 'Full Stack Developer',
+        category: 'Software Engineering',
+        icon: '⚔️',
+        description: 'Build end-to-end scalable web applications from modern reactive frontends to high-performance async backends.',
+        market_demand_score: 92,
+        salary_range: '$110,000 - $160,000',
+        total_skills: 4,
+      },
+      {
+        id: 'car-cloud-04',
+        slug: 'cloud-engineer',
+        name: 'Cloud & DevOps Engineer',
+        category: 'Cloud & Infrastructure',
+        icon: '☁️',
+        description: 'Design resilient cloud architectures, automate infrastructure with Terraform, and manage Kubernetes clusters.',
+        market_demand_score: 94,
+        salary_range: '$125,000 - $170,000',
+        total_skills: 4,
+      },
+      {
+        id: 'car-sec-05',
+        slug: 'cybersecurity-analyst',
+        name: 'Cybersecurity Analyst',
+        category: 'Cybersecurity',
+        icon: '🛡️',
+        description: 'Defend systems against vulnerabilities, analyze threat vectors, conduct penetration tests, and secure cloud environments.',
+        market_demand_score: 93,
+        salary_range: '$105,000 - $155,000',
+        total_skills: 3,
+      },
+      {
+        id: 'car-da-06',
+        slug: 'data-analyst',
+        name: 'Data Analyst',
+        category: 'Data & Analytics',
+        icon: '📊',
+        description: 'Transform raw data into executive dashboards, track business KPIs, and uncover growth opportunities with SQL & BI tools.',
+        market_demand_score: 90,
+        salary_range: '$85,000 - $125,000',
+        total_skills: 4,
+      },
+    ];
+    if (category && category !== 'All') {
+      return fallbackList.filter(c => c.category.toLowerCase().includes(category.toLowerCase()));
+    }
+    return fallbackList;
+  }
+
+  async getCareer(slug: string): Promise<CareerDetail> {
+    try {
+      return await this.request<CareerDetail>(`/careers/${slug}`);
+    } catch (err) {
+      console.warn(`API getCareer('${slug}') fallback active:`, err);
+      return {
+        id: `car-${slug}`,
+        slug: slug,
+        name: slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+        category: 'Software Engineering',
+        icon: '🎯',
+        description: 'Comprehensive curriculum calibrated for immediate industry impact.',
+        market_demand_score: 95,
+        salary_range: '$120,000 - $175,000',
+        skills: [],
+        skill_weights: {},
+        skill_importance: {},
+        target_proficiencies: {},
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Skills Taxonomy, Graph & Intelligent Gap Engine (Phase 7)
+  // ---------------------------------------------------------------------------
+  async getAllSkills(domain?: string, category?: string): Promise<Skill[]> {
+    const params = new URLSearchParams();
+    if (domain) params.append('domain', domain);
+    if (category) params.append('category', category);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return this.request<Skill[]>(`/skills${qs}`);
+  }
+
+  async getMySkills(): Promise<LearnerSkill[]> {
+    return this.request<LearnerSkill[]>('/skills/my-skills');
+  }
+
+  async getMySkillGaps(careerSlug?: string): Promise<CareerReadinessSummary> {
+    const query = careerSlug ? `?career_slug=${encodeURIComponent(careerSlug)}` : '';
+    return this.request<CareerReadinessSummary>(`/skills/skill-gaps${query}`);
+  }
+
+  async getNextBestSkill(): Promise<NextBestSkill | null> {
+    return this.request<NextBestSkill | null>('/skills/next-best-skill');
+  }
+
+  async getSkillDetail(slugOrId: string): Promise<SkillDetail> {
+    return this.request<SkillDetail>(`/skills/${encodeURIComponent(slugOrId)}`);
+  }
+
+  async getSkillPrerequisitesGraph(slugOrId: string): Promise<PrerequisiteGraphResponse> {
+    return this.request<PrerequisiteGraphResponse>(`/skills/${encodeURIComponent(slugOrId)}/prerequisites`);
+  }
+
+  async validateSkillGraph(): Promise<GraphValidationReport> {
+    return this.request<GraphValidationReport>('/skills/graph/validate');
+  }
+
+  async getSkillGapBenchmark(): Promise<any> {
+    return this.request<any>('/skills/benchmark');
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Resources & Recommendations
+  // ---------------------------------------------------------------------------
+  async getResources(resourceType?: string): Promise<Resource[]> {
+    const query = resourceType ? `?resource_type=${encodeURIComponent(resourceType)}` : '';
+    return this.request<Resource[]>(`/resources${query}`);
+  }
+
+  async getRecommendations(limit: number = 10, resourceType?: string, difficulty?: string): Promise<Recommendation[]> {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit.toString());
+    if (resourceType && resourceType !== 'All') params.append('resource_type', resourceType);
+    if (difficulty && difficulty !== 'All') params.append('difficulty', difficulty);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return this.request<Recommendation[]>(`/recommendations${qs}`);
+  }
+
+  async getNextBestAction(): Promise<NextBestAction> {
+    return this.request<NextBestAction>('/recommendations/next-best-action');
+  }
+
+  async sendRecommendationFeedback(payload: RecommendationFeedbackPayload): Promise<any> {
+    return this.request('/recommendations/feedback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getRecommendationObservability(): Promise<RecommendationObservability> {
+    return this.request<RecommendationObservability>('/recommendations/observability');
+  }
+
+  async getRecommendationEvaluation(k: number = 5): Promise<RecommendationEvaluationReport> {
+    return this.request<RecommendationEvaluationReport>(`/recommendations/evaluate?k=${k}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Assessments
+  // ---------------------------------------------------------------------------
+  async getAssessment(careerSlug: string): Promise<AssessmentDetail> {
+    return this.request<AssessmentDetail>(`/assessments/${careerSlug}`);
+  }
+
+  async getLatestAssessment(careerSlug?: string): Promise<AssessmentResult> {
+    const query = careerSlug ? `?career_slug=${encodeURIComponent(careerSlug)}` : '';
+    return this.request<AssessmentResult>(`/assessments/latest${query}`);
+  }
+
+  async submitAssessment(
+    careerSlug: string,
+    answers: Array<{ question_id: string; selected_option: number }>
+  ): Promise<AssessmentResult> {
+    return this.request<AssessmentResult>('/assessments/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        career_slug: careerSlug,
+        answers,
+      }),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Roadmaps
+  // ---------------------------------------------------------------------------
+  async getRoadmap(): Promise<LearningPath> {
+    return this.request<LearningPath>('/roadmaps/current');
+  }
+
+  async completeMilestone(milestoneId: string): Promise<MilestoneItem> {
+    return this.request<MilestoneItem>(`/roadmaps/milestones/${milestoneId}/complete`, {
+      method: 'POST',
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Progress & Activity (Study Sessions vs Completed Learning)
+  // ---------------------------------------------------------------------------
+  async logStudySession(payload: {
+    topic: string;
+    duration_minutes: number;
+    resource_id?: string | null;
+    session_date?: string | null;
+    notes?: string | null;
+  }): Promise<StudySession> {
+    return this.request<StudySession>('/progress/study-sessions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getStudySessions(limit: number = 50): Promise<StudySession[]> {
+    return this.request<StudySession[]>(`/progress/study-sessions?limit=${limit}`);
+  }
+
+  async getStudySummary(): Promise<StudyTimeSummary> {
+    return this.request<StudyTimeSummary>('/progress/summary');
+  }
+
+  async completeResource(resourceId: string, timeSpentMinutes?: number): Promise<CompleteResourceResult> {
+    return this.request<CompleteResourceResult>('/progress/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        resource_id: resourceId,
+        time_spent_minutes: timeSpentMinutes,
+      }),
+    });
+  }
+
+  async logProgress(resourceId: string, minutes: number, status: string = 'completed'): Promise<any> {
+    return this.request('/progress/log', {
+      method: 'POST',
+      body: JSON.stringify({
+        resource_id: resourceId,
+        time_spent_minutes: minutes,
+        status,
+      }),
+    });
+  }
+
+  async getResourceById(resourceId: string): Promise<Resource> {
+    return this.request<Resource>(`/resources/${resourceId}`);
+  }
+
+  async getCompletedProgress(limit: number = 50): Promise<any[]> {
+    return this.request<any[]>(`/progress/completed?limit=${limit}`);
+  }
+
+  async getHeatmap(days: number = 28): Promise<HeatmapDay[]> {
+    return this.request<HeatmapDay[]>(`/progress/heatmap?days=${days}`);
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Feedback & Pacing Adaptation
+  // ---------------------------------------------------------------------------
+  async submitFeedback(payload: {
+    feedback_type: string;
+    learning_path_item_id?: string;
+    notes?: string;
+  }): Promise<any> {
+    return this.request('/feedback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Analytics & Leaderboard
+  // ---------------------------------------------------------------------------
+  async getLeaderboard(): Promise<LeaderboardUser[]> {
+    return this.request<LeaderboardUser[]>('/analytics/leaderboard');
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI Assistant & Tutoring
+  // ---------------------------------------------------------------------------
+  async getAIConversations(): Promise<ConversationSummary[]> {
+    return this.request<ConversationSummary[]>('/ai/conversations');
+  }
+
+  async getAIConversationMessages(conversationId: string): Promise<ChatMessage[]> {
+    return this.request<ChatMessage[]>(`/ai/conversations/${conversationId}/messages`);
+  }
+
+  async createAIConversation(title: string = 'AI Tutoring Session'): Promise<any> {
+    return this.request('/ai/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  async deleteAIConversation(conversationId: string): Promise<any> {
+    return this.request(`/ai/conversations/${conversationId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async chatAISync(payload: {
+    message: string;
+    conversation_id?: string;
+    active_skill?: string;
+  }): Promise<AIChatResponse> {
+    return this.request<AIChatResponse>('/ai/chat/sync', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 8: Adaptive Learning Engine
+  // ---------------------------------------------------------------------------
+  async getAdaptiveState(): Promise<LearnerAdaptiveState> {
+    return this.request<LearnerAdaptiveState>('/learners/me/state');
+  }
+
+  async getAdaptationTimeline(limit: number = 25): Promise<AdaptationEvent[]> {
+    return this.request<AdaptationEvent[]>(`/learners/me/adaptation/timeline?limit=${limit}`);
+  }
+
+  async getProgressHistory(): Promise<ProgressHistoryPoint[]> {
+    return this.request<ProgressHistoryPoint[]>('/learners/me/progress-history');
+  }
+
+  async getRoadmapVersions(): Promise<RoadmapVersion[]> {
+    return this.request<RoadmapVersion[]>('/learners/me/roadmap/versions');
+  }
+
+  async submitEvidence(payload: {
+    skill_id: string;
+    evidence_type: string;
+    score: number;
+    raw_score?: number;
+    source_id?: string;
+    metadata?: Record<string, any>;
+  }): Promise<any> {
+    return this.request('/learners/me/evidence', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async interpretFeedback(comment: string): Promise<FeedbackInterpretationResult> {
+    return this.request<FeedbackInterpretationResult>('/learners/me/feedback/interpret', {
+      method: 'POST',
+      body: JSON.stringify({ comment }),
+    });
+  }
+
+  async getAdaptiveBenchmark(): Promise<AdaptiveBenchmarkReport> {
+    return this.request<AdaptiveBenchmarkReport>('/learners/me/adaptation/benchmark');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Admin & Client Management
+  // ---------------------------------------------------------------------------
+  async getAdminUsers(params?: {
+    search?: string;
+    role?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AdminUserRecord[]> {
+    const query = new URLSearchParams();
+    if (params?.search) query.append('search', params.search);
+    if (params?.role) query.append('role', params.role);
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.offset) query.append('offset', params.offset.toString());
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<AdminUserRecord[]>(`/admin/users${qs}`);
+  }
+
+  async getAdminOverview(): Promise<AdminOverviewStats> {
+    return this.request<AdminOverviewStats>('/admin/overview');
+  }
+
+  async updateUserRole(userId: string, role: string): Promise<AdminUserRecord> {
+    return this.request<AdminUserRecord>(`/admin/users/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+}
+
+export const apiClient = new ApiClient();
