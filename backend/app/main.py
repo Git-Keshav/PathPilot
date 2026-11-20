@@ -1,0 +1,107 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from app.core.config import settings
+from app.core.logging import logger
+from app.core.database import async_engine, Base, AsyncSessionLocal
+from app.api.v1.router import api_v1_router
+from app.seed.seeder import seed_database
+import app.models  # Ensure all models are imported and registered with Base
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Ensure tables exist and run idempotent seed
+    logger.info(f"Initializing {settings.PROJECT_NAME} v{settings.VERSION} [{settings.ENVIRONMENT}]")
+    # Attempt pgvector extension only if enabled
+    from app.models.embedding import USE_PGVECTOR
+    if USE_PGVECTOR:
+        try:
+            async with async_engine.connect() as conn:
+                from sqlalchemy import text
+                await conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+                    text("CREATE EXTENSION IF NOT EXISTS vector;")
+                )
+        except Exception as e:
+            logger.warning(f"pgvector extension initialization note: {e}")
+
+    async with async_engine.begin() as conn:
+        from sqlalchemy import text
+        await conn.run_sync(Base.metadata.create_all)
+        for col_stmt in [
+            "ALTER TABLE resources ADD COLUMN content TEXT;",
+            "ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'learner';",
+            "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);"
+        ]:
+            try:
+                await conn.execute(text(col_stmt))
+            except Exception:
+                pass
+    
+    # Run seed
+    try:
+        async with AsyncSessionLocal() as session:
+            await seed_database(session)
+    except Exception as e:
+        logger.warning(f"Seed execution encountered note/skipped: {e}")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down database engine connection pool...")
+    await async_engine.dispose()
+    logger.info("Application shutdown complete.")
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
+
+# CORS Configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Rate Limiting Middleware
+from app.core.rate_limit import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
+# Global Exception Handlers
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled Exception at {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred. Please try again later."}
+    )
+
+# Health Check & Root Endpoints
+@app.get("/", tags=["Root"])
+@app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
+@app.get("/api/v1/health", tags=["Health"])
+async def health_check():
+    return {
+        "status": "online",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "environment": settings.ENVIRONMENT,
+        "database": "PostgreSQL 16 (Supabase) + pgvector ready"
+    }
+
+# Mount API v1 Router at /api/v1, /api, and root /
+app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+app.include_router(api_v1_router, prefix="/api")
+app.include_router(api_v1_router, prefix="")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

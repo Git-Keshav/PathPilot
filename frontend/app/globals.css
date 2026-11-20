@@ -1,0 +1,177 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Apple-Inspired Premium Light Theme Foundation ── */
+    --background: #F5F5F7;
+    --surface: #FFFFFF;
+    --surface-subtle: #FBFBFD;
+    --surface-elevated: #FFFFFF;
+
+    --text-primary: #1D1D1F;
+    --text-secondary: #6E6E73;
+    --text-tertiary: #86868B;
+
+    --border: #D2D2D7;
+    --border-subtle: #E5E5EA;
+
+    --primary: #007AFF;
+    --primary-hover: #006EDB;
+    --primary-soft: #EAF3FF;
+
+    --success: #34C759;
+    --success-soft: #EAF8EE;
+
+    --warning: #FF9F0A;
+    --warning-soft: #FFF4E0;
+
+    --error: #FF3B30;
+    --error-soft: #FFF0EF;
+
+    --info: #5AC8FA;
+    --info-soft: #EEF9FF;
+  }
+
+  .dark {
+    /* ── Apple-Inspired Sleek Dark Theme Foundation ── */
+    --background: #0A0A0C;
+    --surface: #1C1C1E;
+    --surface-subtle: #2C2C2E;
+    --surface-elevated: #242426;
+
+    --text-primary: #F5F5F7;
+    --text-secondary: #AEAEB2;
+    --text-tertiary: #86868B;
+
+    --border: #38383A;
+    --border-subtle: #2C2C2E;
+
+    --primary: #0A84FF;
+    --primary-hover: #0071E3;
+    --primary-soft: rgba(10, 132, 255, 0.15);
+
+    --success: #30D158;
+    --success-soft: rgba(48, 209, 88, 0.15);
+
+    --warning: #FF9F0A;
+    --warning-soft: rgba(255, 159, 10, 0.15);
+
+    --error: #FF453A;
+    --error-soft: rgba(255, 69, 58, 0.15);
+
+    --info: #64D2FF;
+    --info-soft: rgba(100, 210, 255, 0.15);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--text-primary);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "calt" 1, "liga" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+/* ── Refined Surface Utilities ── */
+.surface-base {
+  background-color: var(--background);
+}
+
+.surface-card {
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.surface-card-hover {
+  background-color: var(--surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.surface-card-hover:hover {
+  border-color: var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+
+.surface-elevated {
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.surface-subtle {
+  background-color: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
+}
+
+.surface-accent-card {
+  background-color: var(--surface);
+  border: 1px solid var(--primary-soft);
+  box-shadow: 0 1px 3px rgba(0, 122, 255, 0.08);
+}
+
+/* ── Typography Scale ── */
+.text-display {
+  font-size: 2.5rem;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.text-title-1 {
+  font-size: 1.75rem;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.text-title-2 {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+
+/* ── Precision Scrollbars ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ── Interactive Focus States ── */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
